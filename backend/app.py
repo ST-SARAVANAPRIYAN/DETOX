@@ -21,6 +21,9 @@ import requests
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Import toxicity lexicon for feature extraction
+from toxicity_lexicon import get_toxic_word_count
+
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
@@ -396,6 +399,54 @@ def execute_preprocessing(spark, socketio, step_id):
         output.append("✓ Binary labels generated (0=Non-toxic, 1=Toxic)")
         socketio.emit('step_progress', {"step_id": step_id, "message": "✓ [SUCCESS] Binary classification labels created"})
         
+        # Add lexicon-based features
+        output.append("\n[PROCESSING] Extracting lexicon-based features...")
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Computing toxic word counts..."})
+        
+        from pyspark.sql.types import StructType, StructField, IntegerType, DoubleType
+        lexicon_schema = StructType([
+            StructField("extreme_toxic_count", IntegerType(), False),
+            StructField("high_toxic_count", IntegerType(), False),
+            StructField("medium_toxic_count", IntegerType(), False),
+            StructField("low_toxic_count", IntegerType(), False),
+            StructField("total_toxic_count", IntegerType(), False),
+            StructField("toxic_word_ratio", DoubleType(), False),
+            StructField("severity_score", DoubleType(), False)
+        ])
+        
+        def extract_lexicon_features(text):
+            if not text or text.strip() == "":
+                return (0, 0, 0, 0, 0, 0.0, 0.0)
+            stats = get_toxic_word_count(text)
+            return (
+                stats['extreme_toxic_count'],
+                stats['high_toxic_count'],
+                stats['medium_toxic_count'],
+                stats['low_toxic_count'],
+                stats['total_toxic_count'],
+                stats['toxic_word_ratio'],
+                stats['severity_score']
+            )
+        
+        lexicon_udf = udf(extract_lexicon_features, lexicon_schema)
+        df = df.withColumn("lexicon_features", lexicon_udf(col("cleaned_text")))
+        df = df.select(
+            "id", "cleaned_text", "label",
+            col("lexicon_features.extreme_toxic_count").alias("extreme_toxic_count"),
+            col("lexicon_features.high_toxic_count").alias("high_toxic_count"),
+            col("lexicon_features.medium_toxic_count").alias("medium_toxic_count"),
+            col("lexicon_features.low_toxic_count").alias("low_toxic_count"),
+            col("lexicon_features.total_toxic_count").alias("total_toxic_count"),
+            col("lexicon_features.toxic_word_ratio").alias("toxic_word_ratio"),
+            col("lexicon_features.severity_score").alias("severity_score")
+        )
+        df.cache()
+        
+        output.append("✓ Lexicon features extracted (7 features)")
+        output.append("  - extreme_toxic_count, high_toxic_count, medium_toxic_count")
+        output.append("  - low_toxic_count, total_toxic_count, toxic_word_ratio, severity_score")
+        socketio.emit('step_progress', {"step_id": step_id, "message": "✓ [SUCCESS] Lexicon features added"})
+        
         # Get label distribution
         output.append("\n[ANALYSIS] Computing class distribution...")
         socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Analyzing label distribution..."})
@@ -430,7 +481,7 @@ def execute_feature_engineering(spark, socketio, step_id):
     """Step 3: Feature Engineering with MLlib"""
     output = []
     try:
-        from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF, IDF
+        from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF, IDF, VectorAssembler
         from pyspark.ml import Pipeline
         
         output.append("=" * 60)
@@ -448,30 +499,48 @@ def execute_feature_engineering(spark, socketio, step_id):
         output.append("  - Input: cleaned_text")
         output.append("  - Output: words (array of tokens)")
         tokenizer = Tokenizer(inputCol="cleaned_text", outputCol="words")
-        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 1/4: Tokenizer configured"})
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 1/5: Tokenizer configured"})
         
         output.append("\n[STAGE 2] StopWordsRemover")
         output.append("  - Input: words")
         output.append("  - Output: filtered_words")
         output.append("  - Removes: 'the', 'a', 'is', etc.")
         remover = StopWordsRemover(inputCol="words", outputCol="filtered_words")
-        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 2/4: StopWordsRemover configured"})
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 2/5: StopWordsRemover configured"})
         
         output.append("\n[STAGE 3] HashingTF (Term Frequency)")
         output.append("  - Input: filtered_words")
         output.append("  - Output: raw_features")
         output.append("  - Feature dimensions: 10,000")
         hashingTF = HashingTF(inputCol="filtered_words", outputCol="raw_features", numFeatures=10000)
-        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 3/4: HashingTF configured (10K features)"})
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 3/5: HashingTF configured (10K features)"})
         
         output.append("\n[STAGE 4] IDF (Inverse Document Frequency)")
         output.append("  - Input: raw_features")
-        output.append("  - Output: features (TF-IDF vectors)")
-        idf = IDF(inputCol="raw_features", outputCol="features")
-        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 4/4: IDF configured"})
+        output.append("  - Output: tfidf_features (TF-IDF vectors)")
+        idf = IDF(inputCol="raw_features", outputCol="tfidf_features")
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 4/5: IDF configured"})
         
-        output.append("\n[INFO] Creating ML Pipeline with 4 transformer stages")
-        pipeline = Pipeline(stages=[tokenizer, remover, hashingTF, idf])
+        output.append("\n[STAGE 5] VectorAssembler (Combine TF-IDF + Lexicon)")
+        output.append("  - Input: tfidf_features + 7 lexicon features")
+        output.append("  - Output: features (10,007 dimensions)")
+        assembler = VectorAssembler(
+            inputCols=[
+                "tfidf_features",
+                "extreme_toxic_count",
+                "high_toxic_count",
+                "medium_toxic_count",
+                "low_toxic_count",
+                "total_toxic_count",
+                "toxic_word_ratio",
+                "severity_score"
+            ],
+            outputCol="features"
+        )
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Stage 5/5: VectorAssembler configured"})
+        
+        output.append("\n[INFO] Creating ML Pipeline with 5 transformer stages")
+        pipeline = Pipeline(stages=[tokenizer, remover, hashingTF, idf, assembler])
         
         socketio.emit('step_progress', {"step_id": step_id, "message": "[PROCESSING] Fitting pipeline to dataset..."})
         output.append("\n[PROCESSING] Fitting pipeline transformers...")
@@ -479,6 +548,7 @@ def execute_feature_engineering(spark, socketio, step_id):
         output.append("  - Filtering stop words")
         output.append("  - Computing term frequencies (TF)")
         output.append("  - Computing inverse document frequencies (IDF)")
+        output.append("  - Assembling TF-IDF + Lexicon features")
         
         model = pipeline.fit(df)
         output.append("✓ Pipeline model fitted successfully")
@@ -492,13 +562,14 @@ def execute_feature_engineering(spark, socketio, step_id):
         # Get feature statistics
         total_records = featured_df.count()
         output.append(f"\n[DATA] Total records processed: {total_records:,}")
-        output.append("[DATA] Feature vector dimensions: 10,000")
-        output.append("[DATA] Feature type: Sparse TF-IDF vectors")
-        socketio.emit('step_progress', {"step_id": step_id, "message": f"[DATA] {total_records:,} feature vectors generated"})
+        output.append("[DATA] Feature vector dimensions: 10,007")
+        output.append("[DATA] Feature composition: 10,000 TF-IDF + 7 Lexicon")
+        output.append("[DATA] Feature type: Combined sparse + dense vectors")
+        socketio.emit('step_progress', {"step_id": step_id, "message": f"[DATA] {total_records:,} feature vectors (10,007 dims)"})
         
         pipeline_state["featured_data"] = featured_df
         pipeline_state["feature_pipeline"] = model
-        pipeline_state["feature_dimensions"] = 10000
+        pipeline_state["feature_dimensions"] = 10007
         
         output.append("\n✓ Feature engineering completed successfully")
         output.append("✓ Dataset ready for train-test split")
@@ -581,6 +652,7 @@ def execute_model_training(spark, socketio, step_id):
     output = []
     try:
         from pyspark.ml.classification import LogisticRegression
+        from pyspark.sql.functions import col, when
         import config
         MAX_ITERATIONS = config.MAX_ITERATIONS
         REGULARIZATION_PARAM = config.REGULARIZATION_PARAM
@@ -594,40 +666,69 @@ def execute_model_training(spark, socketio, step_id):
         if train_data is None:
             raise Exception("[ERROR] No training data found. Execute Step 4 first.")
         
-        output.append("[INFO] Model: Logistic Regression (Binary Classification)")
-        output.append("[INFO] Algorithm: L-BFGS Optimizer")
+        # Calculate class weights for imbalanced dataset
+        output.append("\n[PROCESSING] Computing class weights for imbalanced dataset...")
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[INFO] Calculating class balancing weights..."})
+        
+        total_count = train_data.count()
+        toxic_count = train_data.filter(col("label") == 1).count()
+        non_toxic_count = total_count - toxic_count
+        
+        # Calculate weight for toxic class (minority)
+        toxic_weight = total_count / (2.0 * toxic_count)
+        non_toxic_weight = 1.0
+        
+        output.append(f"[DATA] Total training samples: {total_count:,}")
+        output.append(f"[DATA] Toxic samples: {toxic_count:,} ({(toxic_count/total_count)*100:.2f}%)")
+        output.append(f"[DATA] Non-toxic samples: {non_toxic_count:,} ({(non_toxic_count/total_count)*100:.2f}%)")
+        output.append(f"[DATA] Toxic class weight: {toxic_weight:.2f}x")
+        output.append(f"[DATA] Non-toxic class weight: {non_toxic_weight:.2f}x")
+        socketio.emit('step_progress', {"step_id": step_id, "message": f"[DATA] Class weights: Toxic={toxic_weight:.2f}x, Non-toxic={non_toxic_weight:.2f}x"})
+        
+        # Add weight column
+        train_data = train_data.withColumn(
+            "classWeight",
+            when(col("label") == 1, toxic_weight).otherwise(non_toxic_weight)
+        )
+        train_data.cache()
+        output.append("✓ Class weights added to training data")
+        
+        output.append("\n[INFO] Model: Logistic Regression (Binary Classification)")
+        output.append("[INFO] Algorithm: L-BFGS Optimizer with Class Balancing")
         output.append("\n[CONFIG] Hyperparameters:")
         output.append(f"  - Maximum iterations: {MAX_ITERATIONS}")
         output.append(f"  - Regularization parameter (λ): {REGULARIZATION_PARAM}")
         output.append("  - Elastic Net parameter: 0.0 (L2 regularization)")
-        output.append("  - Features column: 'features' (TF-IDF vectors)")
+        output.append("  - Features column: 'features' (10,007 dimensions)")
         output.append("  - Label column: 'label' (0=Non-toxic, 1=Toxic)")
+        output.append("  - Weight column: 'classWeight' (handles class imbalance)")
         
-        socketio.emit('step_progress', {"step_id": step_id, "message": f"[CONFIG] MaxIter={MAX_ITERATIONS}, RegParam={REGULARIZATION_PARAM}"})
+        socketio.emit('step_progress', {"step_id": step_id, "message": f"[CONFIG] MaxIter={MAX_ITERATIONS}, RegParam={REGULARIZATION_PARAM}, Weighted"})
         
-        # Create and train Logistic Regression model
+        # Create and train Logistic Regression model with class weights
         output.append("\n[PROCESSING] Creating Logistic Regression estimator...")
         lr = LogisticRegression(
             featuresCol="features",
             labelCol="label",
+            weightCol="classWeight",
             maxIter=MAX_ITERATIONS,
             regParam=REGULARIZATION_PARAM,
             elasticNetParam=0.0
         )
-        output.append("✓ Estimator created successfully")
+        output.append("✓ Estimator created with class weight balancing")
         
-        socketio.emit('step_progress', {"step_id": step_id, "message": "[TRAINING] Fitting model to training data..."})
-        output.append("\n[TRAINING] Starting model training...")
-        output.append("  - Optimizing objective function...")
-        output.append("  - Computing gradient descent...")
+        socketio.emit('step_progress', {"step_id": step_id, "message": "[TRAINING] Fitting weighted model to training data..."})
+        output.append("\n[TRAINING] Starting model training with class balancing...")
+        output.append("  - Optimizing weighted objective function...")
+        output.append("  - Computing gradient descent with sample weights...")
         output.append("  - Iterating until convergence...")
         
         # Train model
         model = lr.fit(train_data)
         
-        output.append("\n✓ [SUCCESS] Model training completed")
+        output.append("\n✓ [SUCCESS] Model training completed with class balancing")
         output.append("[INFO] Model coefficients and intercept computed")
-        socketio.emit('step_progress', {"step_id": step_id, "message": "✓ [SUCCESS] Model trained successfully"})
+        socketio.emit('step_progress', {"step_id": step_id, "message": "✓ [SUCCESS] Weighted model trained successfully"})
         
         # Store model summary if available
         try:
