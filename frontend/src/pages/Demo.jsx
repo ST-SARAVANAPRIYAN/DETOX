@@ -226,6 +226,13 @@ const Demo = () => {
             <BarChart3 size={20} />
             View Results
           </button>
+
+          <button 
+            className="btn-control live-btn"
+            onClick={() => navigate('/live')}
+          >
+            ⚡ Live Detection
+          </button>
         </div>
       </div>
 

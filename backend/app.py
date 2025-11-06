@@ -25,6 +25,16 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
+# Import and register production API endpoints
+try:
+    from backend.api_v1 import api_v1
+    from backend.model_cache import model_cache
+    app.register_blueprint(api_v1)
+    print("[INFO] ✓ Production API v1 registered at /api/v1")
+except ImportError as e:
+    print(f"[WARNING] Could not import production API: {e}")
+    model_cache = None
+
 # Global variables for pipeline state
 pipeline_state = {
     "current_step": 0,
@@ -1403,4 +1413,28 @@ if __name__ == '__main__':
     print("Frontend: http://localhost:5173")
     print("Spark UI: http://localhost:4040")
     print("=" * 60)
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    
+    # Initialize model cache for fast predictions
+    if model_cache is not None:
+        try:
+            print("\n[INIT] Loading ML model for production API...")
+            model_path = os.path.join(os.path.dirname(__file__), "..", "models", "toxicity_model")
+            
+            if os.path.exists(model_path):
+                model_cache.initialize(model_path)
+                print("[SUCCESS] ✓ Model loaded and cached")
+                print("[INFO] Production API available at /api/v1")
+                print("[INFO] - POST /api/v1/predict - Single message prediction")
+                print("[INFO] - POST /api/v1/predict/batch - Batch prediction (up to 100 messages)")
+                print("[INFO] - GET /api/v1/health - Health check")
+                print("[INFO] - GET /api/v1/stats - API statistics")
+                print("=" * 60)
+            else:
+                print(f"[WARNING] Model not found at {model_path}")
+                print("[INFO] Run the pipeline first to train the model")
+        except Exception as e:
+            print(f"[ERROR] Failed to load model: {e}")
+            print("[INFO] Production API will not be available")
+    
+    print("\n[INFO] Starting Flask server with WebSocket support...")
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

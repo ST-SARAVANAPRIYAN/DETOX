@@ -37,6 +37,7 @@ TRAIN_TEST_SPLIT_RATIO = 0.8
 RANDOM_SEED = 42
 MAX_ITERATIONS = 100
 REGULARIZATION_PARAM = 0.01
+TOXICITY_THRESHOLD = 0.35  # Lower threshold for better toxic detection
 
 # Feature Engineering
 MIN_TOKEN_LENGTH = 2

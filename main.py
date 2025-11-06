@@ -108,7 +108,11 @@ def main():
         print(f"{'='*60}\n")
         
         classifier = ToxicityClassifier()
+        # Train the model on features
         model = classifier.train_model(train_df)
+        
+        # Create complete pipeline (feature extraction + model) for production
+        classifier.set_complete_pipeline(preprocessor.pipeline_model, model)
         
         # Step 5: Model Evaluation
         print(f"\n{'='*60}")

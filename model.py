@@ -6,6 +6,7 @@ Implements Logistic Regression for toxicity classification
 from pyspark.sql import DataFrame
 from pyspark.ml.classification import LogisticRegression, LogisticRegressionModel
 from pyspark.ml.evaluation import BinaryClassificationEvaluator, MulticlassClassificationEvaluator
+from pyspark.ml import Pipeline, PipelineModel
 from pyspark.sql.functions import col, when, round as spark_round
 import config
 
@@ -17,11 +18,12 @@ class ToxicityClassifier:
     
     def __init__(self):
         self.model = None
+        self.complete_pipeline = None  # Complete pipeline including feature extraction
         self.metrics = {}
     
     def train_model(self, train_df: DataFrame) -> LogisticRegressionModel:
         """
-        Train Logistic Regression model
+        Train Logistic Regression model with class weight balancing
         
         Args:
             train_df: Training DataFrame with features and label
@@ -31,23 +33,77 @@ class ToxicityClassifier:
         """
         print("[INFO] Training Logistic Regression model...")
         
-        # Initialize Logistic Regression
+        # Calculate class distribution for balancing
+        label_counts = train_df.groupBy("label").count().collect()
+        total = sum([row['count'] for row in label_counts])
+        
+        # Calculate class weights (inverse frequency)
+        class_weights = {}
+        for row in label_counts:
+            label = row['label']
+            count = row['count']
+            # Weight = total / (n_classes * count)
+            class_weights[label] = total / (2.0 * count)
+        
+        print(f"[INFO] Class distribution:")
+        for row in label_counts:
+            label = "Toxic" if row['label'] == 1.0 else "Non-toxic"
+            print(f"  {label}: {row['count']} ({row['count']/total*100:.1f}%)")
+        
+        print(f"[INFO] Class weights: {class_weights}")
+        
+        # Initialize Logistic Regression with class weights
         lr = LogisticRegression(
             featuresCol="features",
             labelCol="label",
             maxIter=config.MAX_ITERATIONS,
             regParam=config.REGULARIZATION_PARAM,
             elasticNetParam=0.0,  # L2 regularization
-            family="binomial"
+            family="binomial",
+            weightCol="classWeight"  # Use class weights
         )
         
-        # Train model
-        self.model = lr.fit(train_df)
+        # Add class weight column
+        from pyspark.sql.functions import when
+        train_df_weighted = train_df.withColumn(
+            "classWeight",
+            when(col("label") == 1.0, class_weights.get(1.0, 1.0))
+            .otherwise(class_weights.get(0.0, 1.0))
+        )
+        
+        # Add class weight column
+        from pyspark.sql.functions import when
+        train_df_weighted = train_df.withColumn(
+            "classWeight",
+            when(col("label") == 1.0, class_weights.get(1.0, 1.0))
+            .otherwise(class_weights.get(0.0, 1.0))
+        )
+        
+        # Train model with weighted samples
+        self.model = lr.fit(train_df_weighted)
         
         print("[INFO] Model training complete")
         print(f"[INFO] Number of iterations: {self.model.summary.totalIterations}")
         
         return self.model
+    
+    def set_complete_pipeline(self, feature_pipeline_model, lr_model):
+        """
+        Create complete pipeline by combining feature extraction + trained model
+        
+        Args:
+            feature_pipeline_model: Fitted feature extraction pipeline
+            lr_model: Trained LogisticRegression model
+        """
+        print("[INFO] Creating complete pipeline (feature extraction + model)")
+        
+        # Get all stages from feature pipeline + LR model
+        all_stages = feature_pipeline_model.stages + [lr_model]
+        
+        # Create a new pipeline with all stages
+        self.complete_pipeline = PipelineModel(all_stages)
+        
+        print("[SUCCESS] ✓ Complete pipeline created")
     
     def evaluate_model(self, test_df: DataFrame) -> dict:
         """
@@ -182,17 +238,23 @@ class ToxicityClassifier:
     
     def save_model(self, path: str):
         """
-        Save trained model
+        Save the complete pipeline model
         
         Args:
             path: Path to save the model
         """
-        if self.model is None:
-            raise ValueError("Model not trained yet")
+        print(f"[INFO] Saving model to {path}...")
         
-        print(f"[INFO] Saving model to: {path}")
-        self.model.write().overwrite().save(path)
-        print("[INFO] Model saved successfully")
+        if self.complete_pipeline is not None:
+            print("[INFO] Saving complete PipelineModel (includes feature extraction + classifier)")
+            self.complete_pipeline.write().overwrite().save(path)
+            print(f"[SUCCESS] ✓ Complete PipelineModel saved to {path}")
+        elif self.model is not None:
+            print("[WARNING] Saving only LogisticRegressionModel (feature extraction not included)")
+            self.model.write().overwrite().save(path)
+            print(f"[SUCCESS] ✓ LogisticRegressionModel saved to {path}")
+        else:
+            raise ValueError("No model to save. Train the model first.")
     
     def load_model(self, path: str):
         """
