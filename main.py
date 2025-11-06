@@ -223,5 +223,20 @@ def main():
         print("[INFO] Spark session stopped. Goodbye!\n")
 
 
-if __name__ == "__main__":
+def run_detox_pipeline():
+    """Wrapper function to run the pipeline with timing"""
+    print("\n" + "="*80)
+    print("DETOX - Chat Message Toxicity Detection System")
+    print("="*80 + "\n")
+    
+    start_time = time.time()
     main()
+    end_time = time.time()
+    
+    print(f"\n{'='*80}")
+    print(f"Total Execution Time: {end_time - start_time:.2f} seconds")
+    print(f"{'='*80}\n")
+    return True
+
+if __name__ == "__main__":
+    run_detox_pipeline()
