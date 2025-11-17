@@ -32,6 +32,11 @@ env.bak/
 venv.bak/
 .venv/
 
+# Environment variables (IMPORTANT: Never commit tokens!)
+.env
+.env.local
+.env.*.local
+
 # Spark
 metastore_db/
 derby.log
