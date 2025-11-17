@@ -58,3 +58,10 @@ TOXICITY_LABELS = [
 TOXICITY_THRESHOLD = 0.5
 HIGH_TOXICITY_THRESHOLD = 0.7
 SEVERE_TOXICITY_THRESHOLD = 0.9
+
+# Telegram Bot Configuration
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
+TELEGRAM_AUTO_MODERATE = False  # Set to True to auto-delete toxic messages
+TELEGRAM_MODERATE_THRESHOLD = 0.8  # Delete messages above this toxicity score
+TELEGRAM_MAX_MESSAGE_HISTORY = 100  # Keep last N messages in memory
+TELEGRAM_WARN_USERS = True  # Send warnings to users posting toxic content

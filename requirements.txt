@@ -5,6 +5,9 @@ flask-socketio==5.3.5
 python-socketio==5.10.0
 eventlet==0.35.2
 
+# Telegram Bot Integration
+python-telegram-bot==20.7
+
 # PySpark and Data Science
 pyspark==3.5.3
 pandas>=2.2.0

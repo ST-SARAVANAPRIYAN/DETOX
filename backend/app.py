@@ -1495,6 +1495,84 @@ def get_spark_status():
         "master": "local[*]"
     })
 
+# ============================================================
+# TELEGRAM BOT API ENDPOINTS
+# ============================================================
+
+@app.route('/api/telegram/messages', methods=['GET'])
+def get_telegram_messages():
+    """Get recent messages analyzed by Telegram bot"""
+    try:
+        from backend.telegram_store import telegram_store
+        
+        limit = request.args.get('limit', 50, type=int)
+        messages = telegram_store.get_recent_messages(limit)
+        
+        return jsonify({
+            "success": True,
+            "messages": messages,
+            "total": len(messages)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route('/api/telegram/stats', methods=['GET'])
+def get_telegram_stats():
+    """Get Telegram bot statistics"""
+    try:
+        from backend.telegram_store import telegram_store
+        
+        stats = telegram_store.get_stats()
+        
+        return jsonify({
+            "success": True,
+            "stats": stats
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route('/api/telegram/clear', methods=['POST'])
+def clear_telegram_messages():
+    """Clear all Telegram bot messages"""
+    try:
+        from backend.telegram_store import telegram_store
+        
+        telegram_store.clear_messages()
+        
+        return jsonify({
+            "success": True,
+            "message": "Messages cleared"
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route('/api/telegram/reset-stats', methods=['POST'])
+def reset_telegram_stats():
+    """Reset Telegram bot statistics"""
+    try:
+        from backend.telegram_store import telegram_store
+        
+        telegram_store.reset_stats()
+        
+        return jsonify({
+            "success": True,
+            "message": "Statistics reset"
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection"""
