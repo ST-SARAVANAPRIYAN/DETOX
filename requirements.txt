@@ -5,8 +5,8 @@ flask-socketio==5.3.5
 python-socketio==5.10.0
 eventlet==0.35.2
 
-# Telegram Bot Integration
-python-telegram-bot==20.7
+# Telegram Bot Integration (Updated for Python 3.13 compatibility)
+python-telegram-bot[ext]==22.5
 
 # PySpark and Data Science
 pyspark==3.5.3

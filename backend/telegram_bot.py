@@ -5,9 +5,15 @@ Integrates with Detox ML model for live message analysis
 
 import asyncio
 import logging
+import sys
+import os
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import config
 from backend.telegram_store import telegram_store
 
@@ -295,10 +301,12 @@ Powered by PySpark MLlib + Lexicon Features (90.19% accuracy)
             
             logger.info("✓ Bot handlers registered")
             logger.info("✓ Bot is running! Press Ctrl+C to stop.")
+            logger.info(f"✓ Bot username: @haki_filter_bot")
+            logger.info(f"✓ Send messages to the bot on Telegram to test!")
             
             # Run bot
             self.is_running = True
-            self.app.run_polling(allowed_updates=Update.ALL_TYPES)
+            self.app.run_polling(drop_pending_updates=True)
             
         except Exception as e:
             logger.error(f"Error running bot: {e}")
