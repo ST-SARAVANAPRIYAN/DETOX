@@ -1,8 +1,5 @@
 # Detox - Chat Message Toxicity Detector
 
-**ADI1302-SPARK SCALA FUNDAMENTALS**  
-**Name:** SARAVANA PRIYAN S T  
-**Registration Number:** 927623BAD100
 
 ---
 
